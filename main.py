@@ -113,10 +113,12 @@ def get_db():
     try: yield db
     finally: db.close()
 
-# 5. ENDPOINTS CATEGORÍAS
+# ... (Se mantienen los imports y la configuración de DB igual al inicio)
+
+# 5. ENDPOINTS DE CATEGORÍAS (CRUD COMPLETO)
 @app.get("/categorias", response_model=List[CategoriaResponse])
 def get_categorias(db: Session = Depends(get_db)):
-    return db.query(Categoria).all()
+    return db.query(Categoria).order_by(Categoria.id_categoria.asc()).all()
 
 @app.post("/categorias", response_model=CategoriaResponse)
 def create_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
@@ -124,7 +126,26 @@ def create_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
     db.add(nueva); db.commit(); db.refresh(nueva)
     return nueva
 
-# 6. ENDPOINTS PRODUCTOS (LÓGICA UNIFICADA)
+@app.put("/categorias/{id_categoria}", response_model=CategoriaResponse)
+def update_categoria(id_categoria: int, cat_data: CategoriaCreate, db: Session = Depends(get_db)):
+    cat = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
+    if not cat: raise HTTPException(status_code=404, detail="Categoría no encontrada")
+    cat.nombre = cat_data.nombre
+    db.commit(); db.refresh(cat)
+    return cat
+
+@app.delete("/categorias/{id_categoria}")
+def delete_categoria(id_categoria: int, db: Session = Depends(get_db)):
+    cat = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
+    if not cat: raise HTTPException(status_code=404, detail="Categoría no encontrada")
+    try:
+        db.delete(cat); db.commit()
+        return {"mensaje": "Categoría eliminada"}
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="No se puede eliminar: hay productos usándola")
+
+# 6. ENDPOINTS DE PRODUCTOS (CRUD COMPLETO + LÓGICA DE STOCK)
 @app.get("/productos", response_model=List[ProductoResponse])
 def get_productos(db: Session = Depends(get_db)):
     productos = db.query(Producto).all()
@@ -141,7 +162,33 @@ def create_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
     db.add(nuevo_s); db.commit(); db.refresh(nuevo_p)
     return ProductoResponse.from_orm(nuevo_p)
 
-# 7. ENDPOINTS DE STOCK (LOS QUE PEDISTE)
+@app.put("/productos/{id_producto}", response_model=ProductoResponse)
+def update_producto(id_producto: int, p_data: ProductoCreate, db: Session = Depends(get_db)):
+    p = db.query(Producto).filter(Producto.id_producto == id_producto).first()
+    if not p: raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    p.nombre = p_data.nombre
+    p.descripcion = p_data.descripcion
+    p.precio = p_data.precio
+    p.id_categoria = p_data.id_categoria
+    p.url_imagen = p_data.url_imagen
+    p.activo = p_data.activo
+    
+    # También actualizamos la cantidad en la tabla stock si viene en el PUT
+    if p.inventario:
+        p.inventario.cantidad = p_data.cantidad_inicial
+        
+    db.commit(); db.refresh(p)
+    return ProductoResponse.from_orm(p)
+
+@app.delete("/productos/{id_producto}")
+def delete_producto(id_producto: int, db: Session = Depends(get_db)):
+    p = db.query(Producto).filter(Producto.id_producto == id_producto).first()
+    if not p: raise HTTPException(status_code=404, detail="Producto no encontrado")
+    db.delete(p); db.commit() # Al borrar producto, se borra su stock por el 'cascade'
+    return {"mensaje": "Producto y su stock eliminados correctamente"}
+
+# 7. ENDPOINTS DE CONSULTA Y ACTUALIZACIÓN DE STOCK
 @app.get("/stock", response_model=List[StockResponse])
 def get_all_stock(db: Session = Depends(get_db)):
     return db.query(Stock).all()
@@ -157,6 +204,7 @@ def update_stock(id_producto: int, payload: StockUpdate, db: Session = Depends(g
     db.commit()
     return {"mensaje": "Stock actualizado", "nuevo_stock": item.cantidad}
 
+# ... (Se mantienen upload-imagen y reporte-bajo-stock igual)
 # 8. IMÁGENES Y REPORTES (MANTENIENDO TU LÓGICA ORIGINAL)
 @app.post("/upload-imagen")
 async def upload_imagen(file: UploadFile = File(...)):
