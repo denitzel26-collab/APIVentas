@@ -1,10 +1,9 @@
-# backend2/main.py
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Numeric, Boolean, Text, DateTime, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 from sqlalchemy.sql import func
-from sqlalchemy.exc import IntegrityError # Para manejar errores de base de datos
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -12,9 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
 
-# 1. CONFIGURACIÓN DE LA BASE DE DATOS (POSTGRESQL)
-# Usamos os.getenv para proteger las credenciales. Si no encuentra la variable (ej. en local), usará tu cadena por defecto.
-# En Render, DEBES crear una variable de entorno llamada DATABASE_URL con tu cadena de conexión real.
+# 1. CONFIGURACIÓN DE LA BASE DE DATOS
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", 
     "postgresql://admin:rnGDEbwD02DFHG6ozZrVcJtqTvpRlWTZ@dpg-d6t0tt15pdvs73e41uj0-a.oregon-postgres.render.com/inventariotienda_czox"
@@ -29,6 +26,8 @@ class Categoria(Base):
     __tablename__ = "categorias"
     id_categoria = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100), nullable=False, unique=True)
+    # Relación con productos
+    productos = relationship("Producto", back_populates="categoria")
 
 class Producto(Base):
     __tablename__ = "productos"
@@ -36,13 +35,26 @@ class Producto(Base):
     nombre = Column(String(255), nullable=False)
     descripcion = Column(Text, nullable=True)
     precio = Column(Numeric(10, 2), nullable=False)
-    stock = Column(Integer, nullable=False)
     url_imagen = Column(String(500), nullable=True)
     fecha_creacion = Column(DateTime, server_default=func.now(), nullable=False)
     fecha_actualizacion = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
     id_categoria = Column(Integer, ForeignKey("categorias.id_categoria", ondelete="RESTRICT", onupdate="CASCADE"), nullable=False)
 
+    # Relaciones
+    categoria = relationship("Categoria", back_populates="productos")
+    inventario = relationship("Stock", back_populates="producto", uselist=False, cascade="all, delete-orphan")
+
+class Stock(Base):
+    __tablename__ = "stock"
+    id_stock = Column(Integer, primary_key=True, index=True)
+    cantidad = Column(Integer, default=0, nullable=False)
+    id_producto = Column(Integer, ForeignKey("productos.id_producto", ondelete="CASCADE"), unique=True, nullable=False)
+    
+    # Relación con Producto
+    producto = relationship("Producto", back_populates="inventario")
+
+# Crear tablas
 Base.metadata.create_all(bind=engine)
 
 # 3. ESQUEMAS PYDANTIC
@@ -51,54 +63,57 @@ class CategoriaCreate(BaseModel):
 
 class CategoriaResponse(CategoriaCreate):
     id_categoria: int
-    class Config:
-        from_attributes = True
+    class Config: from_attributes = True
 
 class ProductoCreate(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
     precio: float
-    stock: int
+    cantidad_inicial: int  # Para crear el stock inicial
     url_imagen: Optional[str] = None
     id_categoria: int
     activo: bool = True 
 
-class ProductoResponse(ProductoCreate):
+class ProductoResponse(BaseModel):
     id_producto: int
+    nombre: str
+    descripcion: Optional[str]
+    precio: float
+    url_imagen: Optional[str]
+    id_categoria: int
+    activo: bool
     fecha_creacion: datetime
-    fecha_actualizacion: datetime
-    class Config:
-        from_attributes = True
+    # Atajo para mostrar la cantidad del stock en la respuesta del producto
+    cantidad_stock: int = 0 
+
+    @classmethod
+    def from_orm(cls, obj):
+        # Lógica para extraer la cantidad de la tabla relacionada Stock
+        cantidad = obj.inventario.cantidad if obj.inventario else 0
+        return cls(
+            id_producto=obj.id_producto, nombre=obj.nombre, descripcion=obj.descripcion,
+            precio=obj.precio, url_imagen=obj.url_imagen, id_categoria=obj.id_categoria,
+            activo=obj.activo, fecha_creacion=obj.fecha_creacion, cantidad_stock=cantidad
+        )
 
 class StockUpdate(BaseModel):
     cantidad_a_restar: int
 
 # 4. INICIALIZACIÓN
-app = FastAPI(title="WS 2 - Gestión de Productos e Inventario")
-
+app = FastAPI(title="WS 2 - Gestión de Productos e Inventario (Con Tabla Stock)")
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Configuramos el CORS de forma dinámica
-# En Render, puedes crear una variable FRONTEND_URL con la URL de tu app en Vercel, Netlify o tu app móvil.
 FRONTEND_URL = os.getenv("FRONTEND_URL", "*") 
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[FRONTEND_URL] if FRONTEND_URL != "*" else ["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=[FRONTEND_URL] if FRONTEND_URL != "*" else ["*"], 
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def get_db():
     db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    try: yield db
+    finally: db.close()
 
-# 5. ENDPOINTS DE CATEGORÍAS
+# 5. ENDPOINTS DE CATEGORÍAS (Igual que antes)
 @app.get("/categorias", response_model=List[CategoriaResponse])
 def get_categorias(db: Session = Depends(get_db)):
     return db.query(Categoria).order_by(Categoria.id_categoria.asc()).all()
@@ -109,139 +124,63 @@ def create_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
     if cat_existe: raise HTTPException(status_code=400, detail="Ya existe una categoría con ese nombre")
     nueva_categoria = Categoria(nombre=categoria.nombre)
     db.add(nueva_categoria)
-    db.commit()
-    db.refresh(nueva_categoria)
+    db.commit(); db.refresh(nueva_categoria)
     return nueva_categoria
 
-@app.put("/categorias/{id_categoria}", response_model=CategoriaResponse)
-def update_categoria(id_categoria: int, categoria: CategoriaCreate, db: Session = Depends(get_db)):
-    cat = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
-    if not cat: raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    
-    cat.nombre = categoria.nombre
-    try:
-        db.commit()
-        db.refresh(cat)
-        return cat
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="El nombre ya está en uso por otra categoría.")
-
-@app.delete("/categorias/{id_categoria}")
-def delete_categoria(id_categoria: int, db: Session = Depends(get_db)):
-    cat = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
-    if not cat: raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    
-    try:
-        db.delete(cat)
-        db.commit()
-        return {"mensaje": "Categoría eliminada exitosamente"}
-    except IntegrityError: 
-        db.rollback()
-        raise HTTPException(status_code=400, detail="No puedes eliminar esta categoría porque hay productos que la están usando. Reasigna o elimina los productos primero.")
-
-# 6. ENDPOINTS DE PRODUCTOS E IMÁGENES
+# 6. ENDPOINTS DE PRODUCTOS (Adaptados a tabla Stock)
 @app.get("/productos", response_model=List[ProductoResponse])
 def get_productos(db: Session = Depends(get_db)):
-    return db.query(Producto).order_by(Producto.id_producto.desc()).all()
+    productos = db.query(Producto).all()
+    return [ProductoResponse.from_orm(p) for p in productos]
 
 @app.post("/productos", response_model=ProductoResponse)
 def create_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
     categoria_existe = db.query(Categoria).filter(Categoria.id_categoria == producto.id_categoria).first()
     if not categoria_existe: raise HTTPException(status_code=404, detail="La categoría no existe")
     
-    nuevo_producto = Producto(
+    # 1. Crear el producto
+    nuevo_p = Producto(
         nombre=producto.nombre, descripcion=producto.descripcion, precio=producto.precio,
-        stock=producto.stock, url_imagen=producto.url_imagen, id_categoria=producto.id_categoria,
-        activo=producto.activo 
+        url_imagen=producto.url_imagen, id_categoria=producto.id_categoria, activo=producto.activo 
     )
-    db.add(nuevo_producto)
-    db.commit()
-    db.refresh(nuevo_producto)
-    return nuevo_producto
+    db.add(nuevo_p)
+    db.flush() # Para obtener el ID del producto antes del commit final
 
-@app.put("/productos/{id_producto}", response_model=ProductoResponse)
-def update_producto(id_producto: int, p_act: ProductoCreate, db: Session = Depends(get_db)):
-    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
-    if not producto: raise HTTPException(status_code=404, detail="Producto no encontrado")
-    
-    producto.nombre = p_act.nombre
-    producto.descripcion = p_act.descripcion
-    producto.precio = p_act.precio
-    producto.stock = p_act.stock
-    if p_act.url_imagen: producto.url_imagen = p_act.url_imagen
-    producto.id_categoria = p_act.id_categoria
-    producto.activo = p_act.activo 
+    # 2. Crear el registro en la tabla Stock
+    nuevo_stock = Stock(id_producto=nuevo_p.id_producto, cantidad=producto.cantidad_inicial)
+    db.add(nuevo_stock)
     
     db.commit()
-    db.refresh(producto)
-    return producto
+    db.refresh(nuevo_p)
+    return ProductoResponse.from_orm(nuevo_p)
 
-@app.delete("/productos/{id_producto}")
-def delete_producto(id_producto: int, db: Session = Depends(get_db)):
-    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
-    if not producto: raise HTTPException(status_code=404, detail="Producto no encontrado")
-    db.delete(producto)
+@app.patch("/productos/{id_producto}/update-stock")
+def update_stock(id_producto: int, payload: StockUpdate, db: Session = Depends(get_db)):
+    # Buscamos el stock directamente por el ID del producto
+    stock_item = db.query(Stock).filter(Stock.id_producto == id_producto).first()
+    if not stock_item: raise HTTPException(status_code=404, detail="Inventario no encontrado")
+    
+    if stock_item.cantidad < payload.cantidad_a_restar:
+        raise HTTPException(status_code=400, detail=f"Stock insuficiente. Solo quedan {stock_item.cantidad} unidades.")
+    
+    stock_item.cantidad -= payload.cantidad_a_restar
+    
+    if stock_item.cantidad == 0:
+        stock_item.producto.activo = False
+        
     db.commit()
-    return {"mensaje": "Producto eliminado exitosamente"}
+    return {"mensaje": "Stock actualizado", "nuevo_stock": stock_item.cantidad}
+
+@app.get("/productos/reporte/bajo-stock", response_model=List[ProductoResponse])
+def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
+    # Join con la tabla stock para filtrar por cantidad
+    productos = db.query(Producto).join(Stock).filter(Stock.cantidad <= umbral, Producto.activo == True).all()
+    return [ProductoResponse.from_orm(p) for p in productos]
 
 @app.post("/upload-imagen")
 async def upload_imagen(file: UploadFile = File(...)):
     file_location = f"uploads/{file.filename}"
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
-    
-    # MODIFICADO: Render inyecta automáticamente 'RENDER_EXTERNAL_URL' con tu dominio público.
-    # Si no existe (ej. en local), hacemos un fallback a localhost:8000.
-    base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
-    
-    # Nos aseguramos de quitar cualquier barra final para no romper la URL
-    base_url = base_url.rstrip("/")
-    
+    base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
     return {"url": f"{base_url}/uploads/{file.filename}"}
-# Agregar esto en backend2/main.py (en la sección de endpoints de productos)
-
-@app.get("/productos/reporte/bajo-stock", response_model=List[ProductoResponse])
-def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
-    """
-    HU20: Consultar un reporte específico de productos con bajo stock.
-    Retorna todos los productos cuyo stock sea menor o igual al umbral especificado.
-    Por defecto, el umbral es 10.
-    """
-    # Filtramos productos activos cuyo stock sea menor o igual al umbral
-    productos_bajo_stock = db.query(Producto).filter(
-        Producto.stock <= umbral,
-        Producto.activo == True
-    ).order_by(Producto.stock.asc()).all()
-    
-    # Si quisieras exportarlo a Excel desde Python, usaríamos pandas, 
-    # pero enviar un JSON limpio le permite a tu frontend (React/Angular) 
-    # mostrarlo en una tabla bonita al consultor.
-    return productos_bajo_stock
-
-@app.patch("/productos/{id_producto}/update-stock")
-def update_stock(id_producto: int, payload: StockUpdate, db: Session = Depends(get_db)):
-    # 1. Buscamos el producto
-    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
-    if not producto: 
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    
-    # 2. HU15: Validamos si hay stock suficiente
-    if producto.stock < payload.cantidad_a_restar:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Stock insuficiente. Solo quedan {producto.stock} unidades de {producto.nombre}."
-        )
-    
-    # 3. HU14: Descontamos el stock
-    producto.stock -= payload.cantidad_a_restar
-    
-    # BONUS: Si llega a 0, se inactiva.
-    if producto.stock == 0:
-        producto.activo = False
-        
-    db.commit()
-    db.refresh(producto)
-    
-    
-    return {"mensaje": "Stock actualizado exitosamente", "nuevo_stock": producto.stock}
