@@ -99,6 +99,14 @@ class ProductoResponse(BaseModel):
 class StockUpdate(BaseModel):
     cantidad_a_restar: int
 
+class StockResponse(BaseModel):
+    id_stock: int
+    cantidad: int
+    id_producto: int
+    # Esto es opcional, pero ayuda a saber qué producto es sin buscar el ID
+    class Config:
+        from_attributes = True
+
 # 4. INICIALIZACIÓN
 app = FastAPI(title="WS 2 - Gestión de Productos e Inventario (Con Tabla Stock)")
 os.makedirs("uploads", exist_ok=True)
@@ -132,6 +140,7 @@ def create_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
 def get_productos(db: Session = Depends(get_db)):
     productos = db.query(Producto).all()
     return [ProductoResponse.from_orm(p) for p in productos]
+
 
 @app.post("/productos", response_model=ProductoResponse)
 def create_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
@@ -184,3 +193,21 @@ async def upload_imagen(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, file_object)
     base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
     return {"url": f"{base_url}/uploads/{file.filename}"}
+# 7. ENDPOINTS DE CONSULTA DE STOCK
+
+@app.get("/stock", response_model=List[StockResponse])
+def get_all_stock(db: Session = Depends(get_db)):
+    """
+    Obtiene el inventario completo de todos los productos.
+    """
+    return db.query(Stock).all()
+
+@app.get("/stock/{id_producto}", response_model=StockResponse)
+def get_stock_by_producto(id_producto: int, db: Session = Depends(get_db)):
+    """
+    Consulta el stock disponible de un producto específico mediante su ID.
+    """
+    stock_item = db.query(Stock).filter(Stock.id_producto == id_producto).first()
+    if not stock_item:
+        raise HTTPException(status_code=404, detail="No se encontró registro de stock para este producto")
+    return stock_item
