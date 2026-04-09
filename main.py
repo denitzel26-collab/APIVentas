@@ -153,15 +153,25 @@ def get_productos(db: Session = Depends(get_db)):
 
 @app.post("/productos", response_model=ProductoResponse)
 def create_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
+    # 1. Crear el producto
     nuevo_p = Producto(
-        nombre=producto.nombre, descripcion=producto.descripcion, precio=producto.precio,
-        url_imagen=producto.url_imagen, id_categoria=producto.id_categoria, activo=producto.activo 
+        nombre=producto.nombre, 
+        descripcion=producto.descripcion, 
+        precio=producto.precio,
+        url_imagen=producto.url_imagen, 
+        id_categoria=producto.id_categoria, 
+        activo=producto.activo 
     )
-    db.add(nuevo_p); db.flush() 
-    nuevo_s = Stock(id_producto=nuevo_p.id_producto, cantidad=producto.cantidad_inicial)
-    db.add(nuevo_s); db.commit(); db.refresh(nuevo_p)
-    return ProductoResponse.from_orm(nuevo_p)
+    db.add(nuevo_p)
+    db.flush() # Esto genera el ID del producto sin cerrar la transacción
 
+    # 2. Crear AUTOMÁTICAMENTE el registro en la tabla stock
+    nuevo_s = Stock(id_producto=nuevo_p.id_producto, cantidad=producto.cantidad_inicial)
+    db.add(nuevo_s)
+    
+    db.commit()
+    db.refresh(nuevo_p)
+    return ProductoResponse.from_orm(nuevo_p)
 @app.put("/productos/{id_producto}", response_model=ProductoResponse)
 def update_producto(id_producto: int, p_data: ProductoCreate, db: Session = Depends(get_db)):
     p = db.query(Producto).filter(Producto.id_producto == id_producto).first()
