@@ -14,7 +14,7 @@ import os
 # 1. CONFIGURACIÓN DE LA BASE DE DATOS
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", 
-    "postgresql://admin:rnGDEbwD02DFHG6ozZrVcJtqTvpRlWTZ@dpg-d6t0tt15pdvs73e41uj0-a.oregon-postgres.render.com/inventariotienda_czox"
+    "postgresql://postgres:OdYjBmILhUImSJkvvGOxnIzdfhtMTMnS@postgres.railway.internal:5432/railway"
 )
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
