@@ -219,9 +219,12 @@ def update_stock(id_producto: int, payload: StockUpdate, db: Session = Depends(g
 @app.post("/upload-imagen")
 async def upload_imagen(file: UploadFile = File(...)):
     file_location = f"uploads/{file.filename}"
-    with open(file_location, "wb+") as f: shutil.copyfileobj(file.file, f)
-    url = os.getenv("https://github.com/denitzel26-collab/APIVentas/blob/main").rstrip("/")
-    return {"url": f"{url}/uploads/{file.filename}"}
+    with open(file_location, "wb+") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Usa la URL de tu servicio en Render
+    base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
+    return {"url": f"{base_url}/uploads/{file.filename}"}
 
 @app.get("/productos/reporte/bajo-stock", response_model=List[ProductoResponse])
 def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
