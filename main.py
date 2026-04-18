@@ -221,7 +221,7 @@ async def upload_imagen(file: UploadFile = File(...)):
     file_location = f"uploads/{file.filename}"
     with open(file_location, "wb+") as f: shutil.copyfileobj(file.file, f)
     url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
-        return {"url": f"{url}/uploads/{file.filename}"}
+    return {"url": f"{url}/uploads/{file.filename}"}
 
 @app.get("/productos/reporte/bajo-stock", response_model=List[ProductoResponse])
 def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
