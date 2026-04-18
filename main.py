@@ -216,55 +216,11 @@ def update_stock(id_producto: int, payload: StockUpdate, db: Session = Depends(g
 
 # ... (Se mantienen upload-imagen y reporte-bajo-stock igual)
 # 8. IMÁGENES Y REPORTES (MANTENIENDO TU LÓGICA ORIGINAL)
-@app.post("/upload-imagen")
-async def upload_imagen(file: UploadFile = File(...)):
-    file_location = f"uploads/{file.filename}"
-    with open(file_location, "wb+") as f:
-        shutil.copyfileobj(file.file, f)
+@app.post("/upload-imagen") async def upload_imagen(file: UploadFile = File(...)): file_location = f"uploads/{file.filename}" with open(file_location, "wb+") as f: shutil.copyfileobj(file.file, f) url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/") return {"url": f"{url}/uploads/{file.filename}"}
 
-    # Usa la URL de tu servicio en Render
-    base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
-    return {"url": f"{base_url}/uploads/{file.filename}"}
 
 @app.get("/productos/reporte/bajo-stock", response_model=List[ProductoResponse])
 def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
     prods = db.query(Producto).join(Stock).filter(Stock.cantidad <= umbral).all()
     return [ProductoResponse.from_orm(p) for p in prods]
 
-import asyncio
-import httpx
-from contextlib import asynccontextmanager
-
-# Función que hará el "ping"
-async def keep_alive(url: str):
-    # Esperamos un poco a que el servidor termine de arrancar
-    await asyncio.sleep(5) 
-    client = httpx.AsyncClient()
-    while True:
-        try:
-            # Reemplaza con un endpoint ligero, como /categorias
-            response = await client.get(f"{url}/categorias")
-            print(f"Ping exitoso: {response.status_code} - Manteniendo servicio despierto")
-        except Exception as e:
-            print(f"Error en keep-alive: {e}")
-        
-        # Esperar 10 minutos (600 segundos) antes del siguiente ping
-        # La mayoría de los servicios gratuitos duermen tras 15 min de inactividad
-        await asyncio.sleep(600)
-
-# Configuramos el Lifespan de FastAPI
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # URL de tu app (puedes usar localhost para que se llame internamente)
-    # O usar la URL real si está desplegado
-    url_base = os.getenv("APP_URL", "http://localhost:8000")
-    
-    # Iniciamos la tarea en segundo plano
-    asyncio.create_task(keep_alive(url_base))
-    yield
-
-# Modifica tu inicialización de app para usar el lifespan
-app = FastAPI(
-    title="WS 2 - Gestión Completa con Tabla Stock",
-    lifespan=lifespan
-)
