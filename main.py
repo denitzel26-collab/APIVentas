@@ -102,7 +102,7 @@ class StockResponse(BaseModel):
     class Config: from_attributes = True
 
 # 4. INICIALIZACIÓN
-app = FastAPI(title="WS 2 - Gestión Completa con Tabla Stock")
+app = FastAPI(title="Backend Gestion inventario")
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
