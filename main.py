@@ -228,7 +228,6 @@ def reporte_bajo_stock(umbral: int = 10, db: Session = Depends(get_db)):
     prods = db.query(Producto).join(Stock).filter(Stock.cantidad <= umbral).all()
     return [ProductoResponse.from_orm(p) for p in prods]
 
-// En el index.js de la API de Ventas (Render)
-router.get('/healthcheck', (req, res) => {
-    res.json({ message: "OK" });
-});
+@app.get("/healthcheck")
+def health_check():
+    return {"status": "up and running"}
